@@ -31,16 +31,17 @@ interface ConversationListProps {
   conversations: Conversation[];
   selectedId?: string;
   onSelect: (conversation: Conversation) => void;
+  userId: string;
 }
 
-const ConversationList = ({ conversations, selectedId, onSelect }: ConversationListProps) => {
+const ConversationList = ({ conversations, selectedId, onSelect, userId }: ConversationListProps) => {
   console.log('[ConversationList.tsx] Rendering ConversationList. conversations:', conversations, 'selectedId:', selectedId);
   const [search, setSearch] = useState("");
   const [convList, setConvList] = useState<Conversation[]>(conversations);
 
   // Use selectedId from parent, which only changes when user selects a conversation
   const { deleteConversation } = useSocket({
-    conversationId: selectedId || "",
+    userId,
     onMessage: (msg) => {
       setConvList((prev) => {
         return prev.map((conv) =>

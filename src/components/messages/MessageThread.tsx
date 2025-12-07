@@ -72,13 +72,22 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
 
   // Integrate Socket.io
   // UseSocket only for sending, deleting, updating; parent handles message state
-  const { sendMessage, deleteConversation, deleteMessage, updateMessage, connected } = useSocket({
-    conversationId: conversation.id,
+  const { sendMessage, deleteConversation, deleteMessage, updateMessage, sendReadReceipt, connected } = useSocket({
+    userId: currentUserId,
     onMessage: (msg) => {
       console.log('[MessageThread] Received message, notifying parent');
       // The parent will handle adding the message to state
     },
   });
+  // Emit read receipts for all messages not sent by current user
+  useEffect(() => {
+    messages.forEach((message) => {
+      if (message.sender_id !== currentUserId) {
+        sendReadReceipt(message.id);
+      }
+    });
+    // Only run when messages or currentUserId changes
+  }, [messages, currentUserId, sendReadReceipt]);
 
   useEffect(() => {
     console.log('[MessageThread] Socket connected:', connected);
@@ -464,6 +473,16 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
                         style={{ display: 'inline-block', maxWidth: '100%', wordBreak: 'break-word' }}
                       >
                         <p className="text-sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{message.content}</p>
+                        {/* Read receipt indicator */}
+                        {message.read && (
+                          <span
+                            title={`Read${message.read_at ? ` at ${formatMessageDate(message.read_at)}` : ''}`}
+                            className="ml-2 align-middle text-xs text-green-500"
+                            style={{ verticalAlign: 'middle' }}
+                          >
+                            ✓
+                          </span>
+                        )}
                       </div>
                       <p className={`mt-1 text-xs text-muted-foreground ${isMe ? "text-right" : ""}`}>
                         {formatMessageDate(message.created_at)}

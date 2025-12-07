@@ -26,7 +26,7 @@ export const ConversationSocket = ({ conversationId, onMessage }: {
   useSocket({
     conversationId,
     onMessage,
-  });
+  } as any);
   return null;
 };
 
@@ -171,7 +171,7 @@ const Messages = () => {
         return conv;
       }));
     },
-  });
+  } as any);
 
   // Only join/leave room when socket or activeConversationId changes
   useEffect(() => {
@@ -578,6 +578,7 @@ const Messages = () => {
                   setSelectedConversation(conv as Conversation);
                   setShowSidebar(false);
                 }}
+                userId={user.id}
               />
               </div>
             <div

@@ -12,6 +12,8 @@ export interface Message {
   sender_avatar?: string;
   content: string;
   created_at: string;
+  read?: boolean;
+  read_at?: string;
 }
 
 export interface Conversation {
@@ -58,7 +60,7 @@ export const useMessages = (): UseMessagesReturn => {
   };
 
   const { sendMessage: socketSendMessage, deleteConversation: socketDeleteConversation, deleteMessage: socketDeleteMessage, updateMessage: socketUpdateMessage, updateConversation: socketUpdateConversation, connected } = useSocket({
-    conversationId: activeConversationIdRef.current || "",
+    userId: user?.id || "",
     onMessage: (msg) => {
       // Optionally handle incoming messages here
     },
@@ -225,7 +227,7 @@ export const useMessages = (): UseMessagesReturn => {
 
   // Replace Supabase updateConversation with Socket.io
   const updateConversation = async (conversationId: string, updates: any) => {
-    socketUpdateConversation(updates);
+    socketUpdateConversation(conversationId, updates);
   };
 
   const createConversation = useCallback(async (name: string, isGroup: boolean, participantEmails: string[]): Promise<string | null> => {

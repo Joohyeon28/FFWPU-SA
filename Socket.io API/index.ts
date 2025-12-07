@@ -282,6 +282,40 @@ io.on('connection', (socket) => {
       }
     });
 
+  // Handle message read receipts
+  socket.on('messageRead', async ({ messageId, conversationId }) => {
+    try {
+      if (!messageId || !conversationId) {
+        socket.emit('error', { message: 'Invalid message or conversation ID for read receipt.' });
+        return;
+      }
+      // Update the message's read status in the database
+      const { error, data: updated } = await supabase
+        .from('messages')
+        .update({ read: true, read_at: new Date().toISOString() })
+        .eq('id', messageId)
+        .select()
+        .single();
+      if (error) {
+        console.error('Error updating message read status:', error);
+        socket.emit('error', { message: 'Failed to update message read status.' });
+        return;
+      }
+      // Broadcast the read receipt to all clients in the conversation room
+      io.to(conversationId).emit('messageRead', {
+        messageId,
+        conversationId,
+        read: true,
+        read_at: updated?.read_at || new Date().toISOString(),
+        readerId: userId
+      });
+      console.log(`[SERVER] Broadcasted read receipt for message ${messageId} in conversation ${conversationId}`);
+    } catch (err) {
+      console.error('Unexpected error in messageRead handler:', err);
+      socket.emit('error', { message: 'Server error.' });
+    }
+  });
+
   // Fetch all conversations for the connected user
   socket.on('getConversations', async () => {
     try {
