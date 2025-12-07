@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Supabase Connection</title>
+</head>
+<body>
+  <h1>Testing Supabase Connection</h1>
+  <button onclick="testQuery()">Test Query</button>
+  <pre id="output"></pre>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+    
+    // Replace with your actual values
+    const supabaseUrl = 'https://opendizwrcmluvxabajt.supabase.co'
+    const supabaseKey = 'sb_publishable_RQi0IrqgN7zt3nb3Abbecg_4rWnLRZG'
+    
+    const supabase = createClient(supabaseUrl, supabaseKey)
+    
+    window.testQuery = async function() {
+      const output = document.getElementById('output')
+      output.textContent = 'Testing...\n'
+      
+      try {
+        console.log('Starting query...')
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('*')
+          .limit(1)
+        
+        console.log('Query complete:', { data, error })
+        output.textContent += `Success!\nData: ${JSON.stringify(data, null, 2)}\nError: ${error}`
+      } catch (err) {
+        console.error('Exception:', err)
+        output.textContent += `Exception: ${err.message}`
+      }
+    }
+  </script>
+</body>
+</html>

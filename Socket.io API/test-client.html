@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Socket.io Test Client</title>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+</head>
+<body>
+  <h2>Socket.io Test Client</h2>
+  <div>
+    <label>JWT Token: <input id="token" type="text" style="width:400px"></label><br>
+    <label>Conversation ID: <input id="convId" type="text"></label><br>
+    <button onclick="connect()">Connect & Join</button>
+    <br><br>
+    <input id="msg" type="text" placeholder="Type a message">
+    <button onclick="sendMessage()">Send Message</button>
+  </div>
+  <pre id="log"></pre>
+  <script>
+    let socket;
+
+    function log(msg) {
+      document.getElementById('log').textContent += msg + '\n';
+    }
+
+    function connect() {
+      const token = document.getElementById('token').value;
+      const convId = document.getElementById('convId').value;
+      socket = io('http://localhost:4000', {
+        auth: { token }
+      });
+
+      socket.on('connect', () => {
+        log('Connected: ' + socket.id);
+        socket.emit('join', convId);
+        log('Joined conversation: ' + convId);
+      });
+
+      socket.on('message', (msg) => {
+        log('Received message: ' + JSON.stringify(msg));
+      });
+
+      socket.on('error', (err) => {
+        log('Error: ' + JSON.stringify(err));
+      });
+    }
+
+    function sendMessage() {
+      const convId = document.getElementById('convId').value;
+      const content = document.getElementById('msg').value;
+      if (socket && convId && content) {
+        socket.emit('message', {
+          conversationId: convId,
+          message: { content }
+        });
+        log('Sent message: ' + content);
+      }
+    }
+  </script>
+</body>
+</html>
