@@ -2,6 +2,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Mail, User } from "lucide-react";
 
+import { Shield } from "lucide-react";
+
 interface MemberCardProps {
   member: {
     user_id: string;
@@ -10,6 +12,7 @@ interface MemberCardProps {
     avatar_url?: string;
     bio?: string;
     phone_number?: string;
+    is_admin?: boolean;
   };
   onClick: () => void;
 }
@@ -38,8 +41,15 @@ const MemberCard = ({ member, onClick }: MemberCardProps) => {
                 {getInitials(member.full_name)}
               </AvatarFallback>
             </Avatar>
-            <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-primary/20 rounded-full flex items-center justify-center">
-              <User className="h-3 w-3 text-primary" />
+            <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-primary/20 rounded-full flex items-center justify-center group/admin">
+              {member.is_admin ? (
+                <span className="relative group">
+                  <Shield className="h-3 w-3 text-primary" fill="#facc15" />
+                  <span className="absolute z-10 left-1/2 -translate-x-1/2 bottom-6 px-2 py-1 rounded bg-black text-white text-xs opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap">Admin</span>
+                </span>
+              ) : (
+                <User className="h-3 w-3 text-primary" />
+              )}
             </div>
           </div>
           
