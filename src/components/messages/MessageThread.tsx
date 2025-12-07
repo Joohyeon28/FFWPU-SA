@@ -433,8 +433,9 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
                   key={message.id}
                   className={`mb-4 flex ${isMe ? "justify-end" : "justify-start"}`}
                 >
-                  <div className={`flex max-w-[75%] gap-2 ${isMe ? "flex-row-reverse" : ""}`}>
-                    {!isMe && conversation.is_group && (
+                  <div className={`flex max-w-[75%] ${isMe ? "flex-row-reverse" : ""} ${!conversation.is_group && isMe ? "gap-0" : "gap-2"}`}>
+                    {/* Only show avatar for group messages not sent by current user */}
+                    {conversation.is_group && !isMe && (
                       <Avatar className="h-8 w-8 shrink-0">
                         {message.sender_avatar ? (
                           <AvatarImage 
@@ -459,9 +460,10 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
                           isMe
                             ? "bg-primary text-primary-foreground"
                             : "bg-secondary"
-                        }`}
+                        }`} 
+                        style={{ display: 'inline-block', maxWidth: '100%', wordBreak: 'break-word' }}
                       >
-                        <p className="text-sm">{message.content}</p>
+                        <p className="text-sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{message.content}</p>
                       </div>
                       <p className={`mt-1 text-xs text-muted-foreground ${isMe ? "text-right" : ""}`}>
                         {formatMessageDate(message.created_at)}
