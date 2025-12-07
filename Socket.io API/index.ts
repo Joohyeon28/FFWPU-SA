@@ -94,15 +94,19 @@ io.on('connection', (socket) => {
     console.log(`User ${userId} left room ${conversationId}`);
   });
 
-  // Handle sending a message
-  socket.on('message', async (data) => {
-    console.log('[Socket.io] message event received:', data);
+  // Handle sending a message (with detailed logging)
+  socket.on('sendMessage', async (data) => {
+    console.log('[Socket.io] sendMessage event received:', {
+      socketId: socket.id,
+      userId,
+      data
+    });
     try {
-      const { conversationId, message } = data;
+      const { conversationId, content } = data;
 
       // Validate input data
-      if (!conversationId || !message?.content) {
-        console.error('Invalid message data:', data);
+      if (!conversationId || !content) {
+        console.error('[Socket.io] Invalid sendMessage data:', data);
         socket.emit('error', { message: 'Invalid message data.' });
         return;
       }
@@ -115,14 +119,14 @@ io.on('connection', (socket) => {
         .insert({
           conversation_id: conversationId,
           sender_id: senderId,
-          content: message.content,
+          content,
           created_at: new Date().toISOString(),
         })
         .select()
         .single();
 
       if (error) {
-        console.error('Error saving message to database:', error);
+        console.error('[Socket.io] Error saving message to database:', error);
         socket.emit('error', { message: 'Failed to save message.' });
         return;
       }
@@ -134,21 +138,165 @@ io.on('connection', (socket) => {
         .eq('user_id', senderId)
         .single();
 
-      // Broadcast the saved message to the room
-      io.to(conversationId).emit('message', {
+      const broadcastPayload = {
         ...inserted,
         sender_id: senderId,
         sender_name: senderData?.full_name || 'Unknown',
-        sender_avatar: senderData?.avatar_url, // Add this
-        content: message.content,
-      });
+        sender_avatar: senderData?.avatar_url,
+        content,
+      };
 
-      // Add logging for debugging
-      console.log(`📤 [SERVER] Broadcasting message to room ${conversationId}`);
-      console.log(`📤 [SERVER] Room members:`, io.sockets.adapter.rooms.get(conversationId));
+      // Broadcast the saved message to the room
+      console.log(`[SERVER] Broadcasting message to room ${conversationId}`);
+      console.log(`[SERVER] Broadcast payload:`, broadcastPayload);
+      console.log(`[SERVER] Room members:`, io.sockets.adapter.rooms.get(conversationId));
+      // Broadcast the saved message to the conversation room
+      io.to(conversationId).emit('message', broadcastPayload);
+
+      // Also emit a per-user notification to each conversation member's personal room
+      try {
+        const { data: members, error: membersError } = await supabase
+          .from('conversation_members')
+          .select('user_id')
+          .eq('conversation_id', conversationId);
+
+        if (membersError) {
+          console.error('[Socket.io] Error fetching conversation members:', membersError);
+        } else if (Array.isArray(members)) {
+          const userIds = members.map((m: any) => m.user_id).filter(Boolean);
+          console.log(`[SERVER] Emitting user notifications to:`, userIds);
+          userIds.forEach((uid: string) => {
+            const userRoom = `user-${uid}`;
+            io.to(userRoom).emit('message', broadcastPayload);
+          });
+          // Update persisted unread_count for each member (except sender)
+          try {
+            for (const m of members) {
+              const memberId = m.user_id;
+              if (!memberId) continue;
+              if (memberId === senderId) {
+                // Ensure sender's unread_count remains unchanged (or zero)
+                continue;
+              }
+              // Count unread messages for this member (messages not sent by them and not marked read)
+              const { count, error: countErr } = await supabase
+                .from('messages')
+                .select('id', { count: 'exact' })
+                .eq('conversation_id', conversationId)
+                .neq('sender_id', memberId)
+                .is('is_read', false);
+              let unreadCount = 0;
+              if (countErr) {
+                console.error('[Socket.io] Error counting unread messages for', memberId, countErr);
+              } else {
+                unreadCount = (count as number) || 0;
+              }
+              // Persist the unread_count to conversation_members
+              const { error: updateErr } = await supabase
+                .from('conversation_members')
+                .update({ unread_count: unreadCount })
+                .eq('conversation_id', conversationId)
+                .eq('user_id', memberId);
+              if (updateErr) {
+                console.error('[Socket.io] Error updating unread_count for', memberId, updateErr);
+              }
+              // Emit the updated unread count to the member's personal room
+              const memberRoom = `user-${memberId}`;
+              io.to(memberRoom).emit('conversationUnreadCount', { conversationId, unread_count: unreadCount });
+            }
+          } catch (err) {
+            console.error('[Socket.io] Error updating/emitting unread counts after sendMessage:', err);
+          }
+        }
+      } catch (err) {
+        console.error('[Socket.io] Error emitting per-user notifications:', err);
+      }
     } catch (err) {
-      console.error('Unexpected error in message handler:', err);
+      console.error('[Socket.io] Unexpected error in sendMessage handler:', err);
       socket.emit('error', { message: 'Server error.' });
+    }
+  });
+
+  // Handle marking a conversation as read by this user
+  socket.on('markConversationRead', async (data) => {
+    const conversationId = data?.conversationId;
+    console.log('[Socket.io] markConversationRead received from', userId, 'for', conversationId);
+    if (!conversationId) return;
+    try {
+      const { error: markErr } = await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('conversation_id', conversationId)
+        .neq('sender_id', userId);
+      if (markErr) {
+        console.error('[Socket.io] Error marking messages read:', markErr);
+      }
+
+      // Notify this user's UI to clear conversation-level notifications
+      const userRoom = `user-${userId}`;
+      io.to(userRoom).emit('conversationRead', { conversationId });
+
+      // Optionally notify other participants in the conversation that messages were read (emit to conversation room)
+      io.to(conversationId).emit('conversationReadBy', { conversationId, userId });
+      // Persistently reset this member's unread_count to 0
+      try {
+        const { error: resetErr } = await supabase
+          .from('conversation_members')
+          .update({ unread_count: 0 })
+          .eq('conversation_id', conversationId)
+          .eq('user_id', userId);
+        if (resetErr) {
+          console.error('[Socket.io] Error resetting unread_count for', userId, resetErr);
+        }
+      } catch (err) {
+        console.error('[Socket.io] Error while resetting unread_count persistently:', err);
+      }
+      // Compute unread counts per participant and emit to their personal rooms
+      try {
+        const { data: members, error: membersErr } = await supabase
+          .from('conversation_members')
+          .select('user_id')
+          .eq('conversation_id', conversationId);
+        if (membersErr) {
+          console.error('[Socket.io] Error fetching conversation members for unread counts:', membersErr);
+        } else if (Array.isArray(members)) {
+          for (const m of members) {
+            const memberId = m.user_id;
+            // count unread messages for this member (messages not sent by them and not marked read)
+            const { count, error: countErr } = await supabase
+              .from('messages')
+              .select('id', { count: 'exact' })
+              .eq('conversation_id', conversationId)
+              .neq('sender_id', memberId)
+              .is('is_read', false);
+            let unreadCount = 0;
+            if (countErr) {
+              console.error('[Socket.io] Error counting unread messages for', memberId, countErr);
+            } else {
+              unreadCount = (count as number) || 0;
+            }
+            // Persist the computed unread_count
+            try {
+              const { error: updateErr } = await supabase
+                .from('conversation_members')
+                .update({ unread_count: unreadCount })
+                .eq('conversation_id', conversationId)
+                .eq('user_id', memberId);
+              if (updateErr) {
+                console.error('[Socket.io] Error updating unread_count for', memberId, updateErr);
+              }
+            } catch (err) {
+              console.error('[Socket.io] Error persisting unread_count for', memberId, err);
+            }
+            const memberRoom = `user-${memberId}`;
+            io.to(memberRoom).emit('conversationUnreadCount', { conversationId, unread_count: unreadCount });
+          }
+        }
+      } catch (err) {
+        console.error('[Socket.io] Error computing/emitting unread counts:', err);
+      }
+    } catch (err) {
+      console.error('[Socket.io] Error handling markConversationRead:', err);
     }
   });
 
@@ -409,10 +557,25 @@ io.on('connection', (socket) => {
             })
           );
 
+          // Fetch unread_count for this conversation for the connected user
+          let unread_count = 0;
+          try {
+            const { data: cm } = await supabase
+              .from('conversation_members')
+              .select('unread_count')
+              .eq('conversation_id', conv.id)
+              .eq('user_id', userId)
+              .single();
+            unread_count = cm?.unread_count || 0;
+          } catch (err) {
+            console.error('[SERVER] Error fetching unread_count for conversation', conv.id, err);
+          }
+
           return {
             ...conv,
             participants,
             messages: messagesWithSenders,
+            unread_count,
             last_message: messagesWithSenders[messagesWithSenders.length - 1]?.content,
             last_message_time: messagesWithSenders[messagesWithSenders.length - 1]?.created_at
           };

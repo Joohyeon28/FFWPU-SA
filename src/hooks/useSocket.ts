@@ -16,6 +16,7 @@ interface UseSocketResult {
   updateConversation: (id: string, updates: any) => void;
   sendReadReceipt: (messageId: string) => void;
   connected: boolean;
+  socket: Socket | null;
 }
 
 export function useSocket(options: UseSocketOptions): UseSocketResult {
@@ -68,5 +69,6 @@ export function useSocket(options: UseSocketOptions): UseSocketResult {
     updateConversation,
     sendReadReceipt,
     connected,
+    socket: socketRef.current,
   };
 }

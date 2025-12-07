@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { useSocket } from "@/hooks/useSocket";
+import { useQueryClient } from '@tanstack/react-query';
+import { useSocketContext } from "@/contexts/SocketContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,8 +45,8 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
   const [showAddMembers, setShowAddMembers] = useState(false);
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [addMemberSuggestions, setAddMemberSuggestions] = useState<{ id: string; name: string; email: string }[]>([]);
-  // Use messages from conversation prop directly
-  const messages = conversation.messages || [];
+  // Replace direct use of conversation.messages with local state
+  const [messages, setMessages] = useState<Message[]>(conversation.messages || []);
   // Detect if a user was recently added (by comparing participants)
   const [lastParticipantCount, setLastParticipantCount] = useState(conversation.participants.length);
   const [userAddedNotification, setUserAddedNotification] = useState<string | null>(null);
@@ -70,34 +71,29 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
 
   // Remove JWT logic here. The socket context should be provided by a parent <SocketProvider jwt={jwt}>.
 
-  // Integrate Socket.io
-  // UseSocket only for sending, deleting, updating; parent handles message state
-  const { sendMessage, deleteConversation, deleteMessage, updateMessage, sendReadReceipt, connected } = useSocket({
-    userId: currentUserId,
-    onMessage: (msg) => {
-      console.log('[MessageThread] Received message, notifying parent');
-      // The parent will handle adding the message to state
-    },
-  });
+  // Use socket from context for all real-time actions
+  const { socket, connected } = useSocketContext();
 
   // Join/leave conversation room for real-time messaging
   useEffect(() => {
-    // If the socket instance is not exposed by the hook, rely on the connection state only.
-    // Room join/leave should be handled by the parent SocketProvider or the hook implementation.
-    if (connected && conversation.id) {
-      // no-op: room membership is handled elsewhere
-      return;
+    if (connected && socket && conversation.id) {
+      socket.emit('join', conversation.id);
+      return () => {
+        socket.emit('leave', conversation.id);
+      };
     }
-  }, [connected, conversation.id]);
+  }, [connected, socket, conversation.id]);
+
   // Emit read receipts for all messages not sent by current user
   useEffect(() => {
+    if (!socket) return;
     messages.forEach((message) => {
       if (message.sender_id !== currentUserId) {
-        sendReadReceipt(message.id);
+        socket.emit('readReceipt', { messageId: message.id });
       }
     });
     // Only run when messages or currentUserId changes
-  }, [messages, currentUserId, sendReadReceipt]);
+  }, [messages, currentUserId, socket]);
 
   useEffect(() => {
     console.log('[MessageThread] Socket connected:', connected);
@@ -113,12 +109,105 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
     }
   }, [messages]);
 
-  // Update handleSend to use the local sendMessage
+  // Extend the Message type locally to include isTemporary
+  type LocalMessage = Message & {
+    isTemporary?: boolean; // Optional property for temporary messages
+  };
+
+  // Update local state to use LocalMessage
+  const [localMessages, setLocalMessages] = useState<LocalMessage[]>(conversation.messages || []);
+  const queryClient = useQueryClient();
+
+  // Sync local messages when the conversation prop changes (e.g., when opening a conversation)
+  useEffect(() => {
+    setLocalMessages(conversation.messages || []);
+  }, [conversation.id, conversation.messages]);
+
+  // Update handleSend to use LocalMessage
   const handleSend = () => {
-    if (!newMessage.trim()) return;
-    sendMessage(newMessage.trim());
+    if (!newMessage.trim() || !socket || !conversation.id) return;
+    console.log('[MessageThread] Sending message:', {
+      conversationId: conversation.id,
+      content: newMessage.trim(),
+    });
+    const tempMessage: LocalMessage = {
+      id: `temp-${Date.now()}`, // Temporary ID
+      conversation_id: conversation.id,
+      sender_id: currentUserId,
+      sender_name: "You", // Placeholder for sender name
+      content: newMessage.trim(),
+      created_at: new Date().toISOString(),
+      isTemporary: true, // Mark as temporary
+    };
+    setLocalMessages((prevMessages) => [...prevMessages, tempMessage]);
+    // Optimistically update conversations list in react-query cache
+    try {
+      const now = new Date().toISOString();
+      queryClient.setQueryData(['conversations', currentUserId], (old: any[] = []) => {
+        const updated = [...old];
+        const idx = updated.findIndex((c) => c.id === conversation.id);
+        if (idx !== -1) {
+          // update messages array for this conversation
+          const conv = { ...updated[idx] };
+          conv.last_message = tempMessage.content;
+          conv.last_message_time = tempMessage.created_at;
+          conv.updated_at = now;
+          conv.messages = [...(conv.messages || []), tempMessage];
+          updated[idx] = conv;
+          // move to top
+          const item = updated.splice(idx, 1)[0];
+          updated.unshift(item);
+        } else {
+          // insert stub at top
+          updated.unshift({
+            id: conversation.id,
+            name: conversation.name,
+            is_group: conversation.is_group,
+            participants: conversation.participants,
+            last_message: tempMessage.content,
+            last_message_time: tempMessage.created_at,
+            unread_count: 0,
+            messages: [tempMessage],
+          });
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.warn('[MessageThread] optimistic update failed:', err);
+    }
+    socket.emit('sendMessage', {
+      conversationId: conversation.id,
+      content: newMessage.trim(),
+    });
     setNewMessage("");
   };
+  // Listen for incoming messages and add them to the UI if for this conversation
+  useEffect(() => {
+    if (!socket) return;
+    const handleMessage = (msg: Message) => {
+      console.log('[MessageThread] Received socket message:', msg);
+      if (msg.conversation_id === conversation.id) {
+        setLocalMessages((prevMessages) => {
+          // Replace temporary message if it exists
+          const tempIndex = prevMessages.findIndex((m) => m.isTemporary && m.content === msg.content);
+          if (tempIndex !== -1) {
+            const updatedMessages = [...prevMessages];
+            updatedMessages[tempIndex] = msg; // Replace temporary message
+            return updatedMessages;
+          }
+          // Avoid duplicates
+          if (!prevMessages.some((m) => m.id === msg.id)) {
+            return [...prevMessages, msg];
+          }
+          return prevMessages;
+        });
+      }
+    };
+    socket.on('message', handleMessage);
+    return () => {
+      socket.off('message', handleMessage);
+    };
+  }, [socket, conversation.id]);
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -171,24 +260,27 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
     return groups;
   };
 
-  const messageGroups = groupMessagesByDate(messages);
+  const messageGroups = groupMessagesByDate(localMessages);
 
   // Use socket for deleting conversation
   const handleDeleteConversation = async () => {
+    if (!socket) return;
     if (confirm("Are you sure you want to delete this conversation?")) {
-      deleteConversation(conversation.id);
+      socket.emit('deleteConversation', { id: conversation.id });
       onBack();
     }
   };
 
   // Use socket for deleting a message
   const handleDeleteMessage = async (messageId: string) => {
-    deleteMessage(messageId);
+    if (!socket) return;
+    socket.emit('deleteMessage', { id: messageId });
   };
 
   // Use socket for updating a message
   const handleUpdateMessage = async (messageId: string, newContent: string) => {
-    updateMessage(messageId, newContent);
+    if (!socket) return;
+    socket.emit('updateMessage', { id: messageId, updates: { content: newContent } });
   };
 
   const handleLeaveGroup = async () => {

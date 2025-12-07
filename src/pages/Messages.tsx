@@ -15,20 +15,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { toast as sonnerToast } from "@/components/ui/sonner";
 import { SocketProvider } from '../contexts/SocketContext';
 import { useSocketContext } from '../contexts/SocketContext';
-import { useSocket } from "@/hooks/useSocket";
 import { supabaseClient } from "@/lib/supabase";
 
-export const ConversationSocket = ({ conversationId, onMessage }: { 
-  conversationId: string | null, 
-  onMessage: (msg: any) => void 
-}) => {
-  if (!conversationId) return null;
-  useSocket({
-    conversationId,
-    onMessage,
-  } as any);
-  return null;
-};
+
 
 
 const Messages = () => {
@@ -131,9 +120,11 @@ const Messages = () => {
     : null;
 
   // Listen for new messages and update parent state
-  useSocket({
-    conversationId: activeConversationId || '',
-    onMessage: (msg) => {
+
+  // Listen for new messages and update parent state using the context socket
+  useEffect(() => {
+    if (!socket) return;
+    const handleMessage = (msg: any) => {
       console.log('[Messages] Received socket message:', msg);
       setSocketConversations(prev => prev.map(conv => {
         if (conv.id === msg.conversation_id) {
@@ -170,8 +161,12 @@ const Messages = () => {
         }
         return conv;
       }));
-    },
-  } as any);
+    };
+    socket.on('message', handleMessage);
+    return () => {
+      socket.off('message', handleMessage);
+    };
+  }, [socket, user, navigate]);
 
   // Only join/leave room when socket or activeConversationId changes
   useEffect(() => {

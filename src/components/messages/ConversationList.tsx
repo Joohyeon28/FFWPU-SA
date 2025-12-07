@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Search, Users } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useSocket } from "@/hooks/useSocket";
+import { useSocketContext } from "@/contexts/SocketContext";
 import { formatDistanceToNow } from "date-fns";
 // Import removed to avoid local 'Conversation' type conflict.
 // Remove unused SocketProvider import. Wrap your parent component (e.g., Messages.tsx) with <SocketProvider jwt={jwt}> ... </SocketProvider>
@@ -39,29 +40,115 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
   const [search, setSearch] = useState("");
   const [convList, setConvList] = useState<Conversation[]>(conversations);
 
-  // Use selectedId from parent, which only changes when user selects a conversation
-  const { deleteConversation } = useSocket({
-    userId,
-    onMessage: (msg) => {
-      setConvList((prev) => {
-        return prev.map((conv) =>
-          conv.id === msg.conversation_id
-            ? {
-                ...conv,
-                last_message: msg.content,
-                last_message_time: msg.created_at,
-                unread_count: (conv.unread_count ?? 0) + 1,
-              }
-            : conv
-        );
-      });
-    },
-  });
+  // Use the shared authenticated socket from context
+  const { socket, connected } = useSocketContext();
 
-  // Listen for new messages to update conversation list
+  // deleteConversation still uses the socket emit; we'll call it directly below
+
+  // Join the user's personal room so this component receives per-user notifications
   useEffect(() => {
-    setConvList(conversations);
+    if (!socket) return;
+    const userRoom = `user-${userId}`;
+    socket.emit('join', userRoom, (res: any) => {
+      console.log('[ConversationList] joined user room:', userRoom, res);
+    });
+    return () => {
+      try {
+        socket.emit('leave', userRoom);
+      } catch (err) {
+        // ignore
+      }
+    };
+  }, [socket, userId]);
+
+  // Merge incoming conversations prop with local convList so socket updates aren't overwritten
+  useEffect(() => {
+    setConvList((prev) => {
+      const prevMap: Record<string, Conversation> = {};
+      prev.forEach((p) => {
+        prevMap[p.id] = p;
+      });
+      return conversations.map((c) => {
+        const existing = prevMap[c.id];
+        if (!existing) return c;
+        // Preserve locally-updated fields (unread_count, last_message, last_message_time) if they exist
+        return {
+          ...c,
+          unread_count: existing.unread_count ?? c.unread_count,
+          last_message: existing.last_message ?? c.last_message,
+          last_message_time: existing.last_message_time ?? c.last_message_time,
+        };
+      });
+    });
   }, [conversations]);
+
+  // Register message listener on the shared socket (authenticated)
+  useEffect(() => {
+    if (!socket) return;
+    const handleMsg = (msg: any) => {
+      console.log('[ConversationList] socket onMessage received (context):', msg);
+      setConvList((prev) => {
+        const found = prev.some((conv) => conv.id === msg.conversation_id);
+        if (found) {
+          return prev.map((conv) =>
+            conv.id === msg.conversation_id
+              ? {
+                  ...conv,
+                  last_message: msg.content,
+                  last_message_time: msg.created_at,
+                  unread_count: (conv.unread_count ?? 0) + 1,
+                }
+              : conv
+          );
+        }
+        // If conversation not found locally, prepend a stub so the list updates
+        const stub: Conversation = {
+          id: msg.conversation_id,
+          name: (msg.conversation_name as string) || "Conversation",
+          is_group: false,
+          participants: [],
+          last_message: msg.content,
+          last_message_time: msg.created_at,
+          unread_count: 1,
+        };
+        return [stub, ...prev];
+      });
+    };
+
+    socket.on('message', handleMsg);
+
+    const handleUnreadCount = (payload: any) => {
+      console.log('[ConversationList] conversationUnreadCount received:', payload);
+      const convoId = payload?.conversationId;
+      const unread = payload?.unread_count ?? 0;
+      setConvList((prev) => {
+        const found = prev.some((c) => c.id === convoId);
+        if (found) {
+          return prev.map((c) => (c.id === convoId ? { ...c, unread_count: unread } : c));
+        }
+        if (unread > 0) {
+          const stub: Conversation = {
+            id: convoId,
+            name: 'Conversation',
+            is_group: false,
+            participants: [],
+            last_message: undefined,
+            last_message_time: undefined,
+            unread_count: unread,
+          };
+          return [stub, ...prev];
+        }
+        return prev;
+      });
+    };
+
+    socket.on('conversationUnreadCount', handleUnreadCount);
+
+    return () => {
+      socket.off('message', handleMsg);
+      socket.off('conversationUnreadCount', handleUnreadCount);
+    };
+  }, [socket]);
 
   // The useSocket hook does not expose the raw socket instance; handle server-driven
   // conversation removals via the conversations prop updates (already covered by the
@@ -73,7 +160,11 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
       console.error('Invalid conversation ID passed to handleDeleteConversation');
       return;
     }
-    deleteConversation(conversationId);
+    try {
+      socket?.emit('deleteConversation', conversationId);
+    } catch (err) {
+      console.warn('Failed to emit deleteConversation', err);
+    }
   };
 
   const filteredConversations = convList.filter((conv) =>
@@ -132,7 +223,17 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
           filteredConversations.map((conversation, idx) => (
             <button
               key={conversation.id || idx}
-              onClick={() => onSelect(conversation)}
+              onClick={() => {
+                // Clear unread count locally when selecting the conversation
+                setConvList((prev) => prev.map((c) => c.id === conversation.id ? { ...c, unread_count: 0 } : c));
+                // Emit a socket event to mark conversation read (backend may handle this)
+                try {
+                  socket?.emit('markConversationRead', { conversationId: conversation.id });
+                } catch (err) {
+                  console.warn('Failed to emit markConversationRead', err);
+                }
+                onSelect(conversation);
+              }}
               className={`flex w-full items-start gap-3 border-b p-4 text-left transition-colors hover:bg-secondary/50 ${
                 selectedId === conversation.id ? "bg-secondary" : ""
               }`}
@@ -166,9 +267,12 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
                 <div className="flex items-center justify-between">
                   <span className="font-medium">{conversation.name}</span>
                   {conversation.last_message_time && (
-                    <span className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(conversation.last_message_time), { addSuffix: false })}
-                    </span>
+                    <div className="text-right">
+                      <span className="text-xs text-muted-foreground">
+                        {formatDistanceToNow(new Date(conversation.last_message_time), { addSuffix: false })}
+                      </span>
+                      {/* Unread count under the timestamp removed - badge near avatar remains */}
+                    </div>
                   )}
                 </div>
                 {conversation.is_group && (
