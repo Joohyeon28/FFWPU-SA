@@ -79,6 +79,16 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
       // The parent will handle adding the message to state
     },
   });
+
+  // Join/leave conversation room for real-time messaging
+  useEffect(() => {
+    // If the socket instance is not exposed by the hook, rely on the connection state only.
+    // Room join/leave should be handled by the parent SocketProvider or the hook implementation.
+    if (connected && conversation.id) {
+      // no-op: room membership is handled elsewhere
+      return;
+    }
+  }, [connected, conversation.id]);
   // Emit read receipts for all messages not sent by current user
   useEffect(() => {
     messages.forEach((message) => {

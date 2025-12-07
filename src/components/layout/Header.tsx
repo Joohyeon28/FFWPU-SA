@@ -51,21 +51,21 @@ const Header = () => {
           <span className="text-lg truncate font-bold">FFWPU-SA</span>
         </Link>
 
-        <nav className="hidden items-center gap-8 md:flex">
-          <Link to="/" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/")}`}>
+        <nav className="hidden md:flex absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 items-center gap-8">
+          <Link to="/" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/")}`}> 
             Home
           </Link>
-          <Link to="/messages" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/messages")}`}>
+          <Link to="/messages" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/messages")}`}> 
             Messages
           </Link>
-          <Link to="/events" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/events")}`}>
+          <Link to="/events" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/events")}`}> 
             Events
           </Link>
-          <Link to="/about" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/about")}`}>
+          <Link to="/about" className={`text-sm font-medium transition-all hover:text-white/80 ${isActive("/about")}`}> 
             About
           </Link>
           {isAdmin && (
-            <Link to="/admin/dashboard" className={`text-sm font-medium transition-all hover:text-white/80 flex items-center gap-1 ${isActive("/admin/dashboard")}`}>
+            <Link to="/admin/dashboard" className={`text-sm font-medium transition-all hover:text-white/80 flex items-center gap-1 ${isActive("/admin/dashboard")}`}> 
               <Shield className="h-4 w-4" />
               Admin
             </Link>
