@@ -50,6 +50,12 @@ const Header = () => {
 
     const handleNewMessage = (message: any) => {
       console.log("[Header] New message received (socket):", message);
+      // Ignore notifications for messages sent by the current user
+      if (message?.sender_id && user && message.sender_id === user.id) {
+        console.log('[Header] Ignoring own message for notifications.');
+        return;
+      }
+
       if (message.conversation_id) {
         console.log("[Header] Message belongs to conversation:", message.conversation_id);
       } else {

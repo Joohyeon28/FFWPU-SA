@@ -2,7 +2,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Search, Users } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useSocket } from "@/hooks/useSocket";
 import { useSocketContext } from "@/contexts/SocketContext";
 import { formatDistanceToNow } from "date-fns";
 // Import removed to avoid local 'Conversation' type conflict.
@@ -33,9 +32,10 @@ interface ConversationListProps {
   selectedId?: string;
   onSelect: (conversation: Conversation) => void;
   userId: string;
+  deletingIds?: string[];
 }
 
-const ConversationList = ({ conversations, selectedId, onSelect, userId }: ConversationListProps) => {
+const ConversationList = ({ conversations, selectedId, onSelect, userId, deletingIds = [] }: ConversationListProps) => {
   console.log('[ConversationList.tsx] Rendering ConversationList. conversations:', conversations, 'selectedId:', selectedId);
   const [search, setSearch] = useState("");
   const [convList, setConvList] = useState<Conversation[]>(conversations);
@@ -96,7 +96,8 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
                   ...conv,
                   last_message: msg.content,
                   last_message_time: msg.created_at,
-                  unread_count: (conv.unread_count ?? 0) + 1,
+                  // Only increment unread_count for messages not sent by the current user
+                  unread_count: msg.sender_id === userId ? (conv.unread_count ?? 0) : (conv.unread_count ?? 0) + 1,
                 }
               : conv
           );
@@ -109,13 +110,21 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
           participants: [],
           last_message: msg.content,
           last_message_time: msg.created_at,
-          unread_count: 1,
+          unread_count: msg.sender_id === userId ? 0 : 1,
         };
         return [stub, ...prev];
       });
     };
 
     socket.on('message', handleMsg);
+
+    const handleConversationDeleted = (payload: any) => {
+      console.log('[ConversationList] conversationDeleted received:', payload);
+      const convoId = typeof payload === 'string' ? payload : payload?.conversationId || payload?.id;
+      if (!convoId) return;
+      setConvList((prev) => prev.filter((c) => c.id !== convoId));
+    };
+    socket.on('conversationDeleted', handleConversationDeleted);
 
     const handleUnreadCount = (payload: any) => {
       console.log('[ConversationList] conversationUnreadCount received:', payload);
@@ -147,6 +156,7 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
     return () => {
       socket.off('message', handleMsg);
       socket.off('conversationUnreadCount', handleUnreadCount);
+      socket.off('conversationDeleted', handleConversationDeleted);
     };
   }, [socket]);
 
@@ -203,7 +213,7 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
+        {isLoading && (
           <div className="space-y-4 p-4">
             {[...Array(5)].map((_, idx) => (
               <div key={idx} className="flex items-center gap-3 animate-pulse">
@@ -215,79 +225,92 @@ const ConversationList = ({ conversations, selectedId, onSelect, userId }: Conve
               </div>
             ))}
           </div>
-        ) : filteredConversations.length === 0 ? (
+        )}
+
+        {!isLoading && filteredConversations.length === 0 && (
           <div className="flex h-32 items-center justify-center text-muted-foreground">
             No conversations found
           </div>
-        ) : (
-          filteredConversations.map((conversation, idx) => (
-            <button
-              key={conversation.id || idx}
-              onClick={() => {
-                // Clear unread count locally when selecting the conversation
-                setConvList((prev) => prev.map((c) => c.id === conversation.id ? { ...c, unread_count: 0 } : c));
-                // Emit a socket event to mark conversation read (backend may handle this)
-                try {
-                  socket?.emit('markConversationRead', { conversationId: conversation.id });
-                } catch (err) {
-                  console.warn('Failed to emit markConversationRead', err);
-                }
-                onSelect(conversation);
-              }}
-              className={`flex w-full items-start gap-3 border-b p-4 text-left transition-colors hover:bg-secondary/50 ${
-                selectedId === conversation.id ? "bg-secondary" : ""
-              }`}
-            >
-              <div className="relative">
-                <Avatar className="h-12 w-12">
-                  {conversation.is_group ? (
-                    <AvatarFallback className="bg-primary/10 text-primary">
-                      <Users className="h-5 w-5" />
-                    </AvatarFallback>
-                  ) : conversation.avatar && !imageErrorMap[conversation.id] ? (
-                    <AvatarImage
-                      src={conversation.avatar}
-                      alt={conversation.name}
-                      onError={() => handleImageError(conversation.id)}
-                    />
-                  ) : (
-                    <AvatarFallback>
-                      {getInitials(conversation.name)}
-                    </AvatarFallback>
-                  )}
-                </Avatar>
-                {conversation.unread_count > 0 && (
-                  <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
-                    {conversation.unread_count}
-                  </span>
-                )}
-              </div>
+        )}
 
-              <div className="flex-1 overflow-hidden">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">{conversation.name}</span>
-                  {conversation.last_message_time && (
-                    <div className="text-right">
-                      <span className="text-xs text-muted-foreground">
-                        {formatDistanceToNow(new Date(conversation.last_message_time), { addSuffix: false })}
+        {!isLoading && filteredConversations.length > 0 && (
+          <div>
+            {filteredConversations.map((conversation, idx) => (
+              <div key={conversation.id || idx} className="relative">
+                <button
+                  onClick={() => {
+                    // Clear unread count locally when selecting the conversation
+                    setConvList((prev) => prev.map((c) => c.id === conversation.id ? { ...c, unread_count: 0 } : c));
+                    // Emit a socket event to mark conversation read (backend may handle this)
+                    try {
+                      socket?.emit('markConversationRead', { conversationId: conversation.id });
+                    } catch (err) {
+                      console.warn('Failed to emit markConversationRead', err);
+                    }
+                    onSelect(conversation);
+                  }}
+                  className={`flex w-full items-start gap-3 border-b p-4 text-left transition-colors hover:bg-secondary/50 ${
+                    selectedId === conversation.id ? "bg-secondary" : ""
+                  }`}
+                  disabled={deletingIds.includes(conversation.id)}
+                >
+                  <div className="relative">
+                    <Avatar className="h-12 w-12">
+                      {conversation.is_group ? (
+                        <AvatarFallback className="bg-primary/10 text-primary">
+                          <Users className="h-5 w-5" />
+                        </AvatarFallback>
+                      ) : conversation.avatar && !imageErrorMap[conversation.id] ? (
+                        <AvatarImage
+                          src={conversation.avatar}
+                          alt={conversation.name}
+                          onError={() => handleImageError(conversation.id)}
+                        />
+                      ) : (
+                        <AvatarFallback>
+                          {getInitials(conversation.name)}
+                        </AvatarFallback>
+                      )}
+                    </Avatar>
+                    {conversation.unread_count > 0 && (
+                      <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                        {conversation.unread_count}
                       </span>
-                      {/* Unread count under the timestamp removed - badge near avatar remains */}
+                    )}
+                  </div>
+
+                  <div className="flex-1 overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{conversation.name}</span>
+                      {conversation.last_message_time && (
+                        <div className="text-right">
+                          <span className="text-xs text-muted-foreground">
+                            {formatDistanceToNow(new Date(conversation.last_message_time), { addSuffix: false })}
+                          </span>
+                          {/* Unread count under the timestamp removed - badge near avatar remains */}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </div>
-                {conversation.is_group && (
-                  <p className="text-xs text-muted-foreground">
-                    {conversation.participants.length} members
-                  </p>
-                )}
-                {conversation.last_message && (
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {conversation.last_message}
-                  </p>
+                    {conversation.is_group && (
+                      <p className="text-xs text-muted-foreground">
+                        {conversation.participants.length} members
+                      </p>
+                    )}
+                    {conversation.last_message && (
+                      <p className="mt-1 truncate text-sm text-muted-foreground">
+                        {conversation.last_message}
+                      </p>
+                    )}
+                  </div>
+                </button>
+                {deletingIds.includes(conversation.id) && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-muted-foreground">
+                    Deleting...
+                  </div>
                 )}
               </div>
-            </button>
-          ))
+            ))}
+          </div>
         )}
       </div>
     </div>

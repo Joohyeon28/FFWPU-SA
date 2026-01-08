@@ -12,18 +12,27 @@ const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SE
 
 const app = express();
 const server = http.createServer(app);
+// During development allow all origins for easier local testing. In production, restrict this.
+const devCors = {
+  origin: true,
+  methods: ['GET', 'POST'],
+  credentials: true,
+};
+
+const prodCors = {
+  origin: [
+    'http://localhost:8080',
+    'http://localhost:8080/',
+    'http://127.0.0.1:8080',
+    'http://127.0.0.1:8080/',
+    'https://192.168.1.40:8080',
+  ],
+  methods: ['GET', 'POST'],
+  credentials: true,
+};
+
 const io = new Server(server, {
-  cors: {
-    origin: [
-      'http://localhost:8080',
-      'http://localhost:8080/',
-      'http://127.0.0.1:8080',
-      'http://127.0.0.1:8080/',
-      'https://192.168.1.40:8080',
-    ],
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
+  cors: process.env.NODE_ENV === 'production' ? prodCors : devCors,
 });
 
 // Health check endpoint
@@ -166,6 +175,8 @@ io.on('connection', (socket) => {
           const userIds = members.map((m: any) => m.user_id).filter(Boolean);
           console.log(`[SERVER] Emitting user notifications to:`, userIds);
           userIds.forEach((uid: string) => {
+            // Do not emit per-user 'message' notification to the sender - they already receive the conversation broadcast
+            if (uid === senderId) return;
             const userRoom = `user-${uid}`;
             io.to(userRoom).emit('message', broadcastPayload);
           });
@@ -301,10 +312,25 @@ io.on('connection', (socket) => {
   });
 
     // Handle deleting a conversation
-    socket.on('deleteConversation', async (conversationId) => {
-      console.log('[Socket.io] deleteConversation event received:', conversationId);
+    socket.on('deleteConversation', async (conversationIdOrObj) => {
+      console.log('[Socket.io] deleteConversation event received:', conversationIdOrObj);
       try {
-        if (!conversationId) {
+        // Normalize payload: allow either a string id or an object like { id: '...' }
+        let convId: string | undefined;
+        if (!conversationIdOrObj) {
+          socket.emit('error', { message: 'Invalid conversation ID.' });
+          return;
+        }
+
+        if (typeof conversationIdOrObj === 'string') {
+          convId = conversationIdOrObj;
+        } else if (typeof conversationIdOrObj === 'object' && conversationIdOrObj !== null) {
+          // try common fields
+          convId = (conversationIdOrObj as any).id || (conversationIdOrObj as any).conversationId || undefined;
+        }
+
+        if (!convId || typeof convId !== 'string') {
+          console.error('[Socket.io] deleteConversation: could not determine conversation id from payload:', conversationIdOrObj);
           socket.emit('error', { message: 'Invalid conversation ID.' });
           return;
         }
@@ -313,7 +339,7 @@ io.on('connection', (socket) => {
         const { error: membersError } = await supabase
           .from('conversation_members')
           .delete()
-          .eq('conversation_id', conversationId);
+          .eq('conversation_id', convId);
 
         if (membersError) {
           console.error('Error deleting conversation members:', membersError);
@@ -325,7 +351,7 @@ io.on('connection', (socket) => {
         const { error: messagesError } = await supabase
           .from('messages')
           .delete()
-          .eq('conversation_id', conversationId);
+          .eq('conversation_id', convId);
 
         if (messagesError) {
           console.error('Error deleting messages:', messagesError);
@@ -337,7 +363,7 @@ io.on('connection', (socket) => {
         const { error: conversationError } = await supabase
           .from('conversations')
           .delete()
-          .eq('id', conversationId);
+          .eq('id', convId);
 
         if (conversationError) {
           console.error('Error deleting conversation:', conversationError);
@@ -346,8 +372,12 @@ io.on('connection', (socket) => {
         }
 
         // Notify all clients in the room
-        io.to(conversationId).emit('conversationDeleted', { conversationId });
-        socket.leave(conversationId);
+        io.to(convId).emit('conversationDeleted', { conversationId: convId });
+        try {
+          socket.leave(convId);
+        } catch (leaveErr) {
+          console.warn('[Socket.io] Warning leaving room after delete:', leaveErr);
+        }
       } catch (err) {
         console.error('Unexpected error in deleteConversation handler:', err);
         socket.emit('error', { message: 'Server error.' });

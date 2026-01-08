@@ -47,24 +47,7 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
   const [addMemberSuggestions, setAddMemberSuggestions] = useState<{ id: string; name: string; email: string }[]>([]);
   // Replace direct use of conversation.messages with local state
   const [messages, setMessages] = useState<Message[]>(conversation.messages || []);
-  // Detect if a user was recently added (by comparing participants)
-  const [lastParticipantCount, setLastParticipantCount] = useState(conversation.participants.length);
-  const [userAddedNotification, setUserAddedNotification] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (conversation.is_group) {
-      if (conversation.participants.length > lastParticipantCount) {
-        // Find the new participant(s)
-        const prevCount = lastParticipantCount;
-        const prevIds = new Set(conversation.participants.slice(0, prevCount).map(p => p.id));
-        const newUsers = conversation.participants.filter(p => !prevIds.has(p.id));
-        if (newUsers.length > 0) {
-          setUserAddedNotification(`${newUsers.map(u => u.name).join(", ")} joined the group`);
-        }
-      }
-      setLastParticipantCount(conversation.participants.length);
-    }
-  }, [conversation.participants]);
+  // Replace direct use of conversation.messages with local state
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const renderCount = useRef(0);
@@ -236,8 +219,8 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
     return format(date, "MMM d, h:mm a");
   };
 
-  const groupMessagesByDate = (messages: Message[]) => {
-    const groups: { date: string; messages: Message[] }[] = [];
+  const groupMessagesByDate = (messages: LocalMessage[]) => {
+    const groups: { date: string; messages: LocalMessage[] }[] = [];
     let currentDate = "";
 
     messages.forEach((message) => {
@@ -514,14 +497,7 @@ const MessageThread = ({ conversation, currentUserId, onSendMessage, onBack, onL
 
       {/* Messages */}
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4">
-        {/* Show notification if a user was added */}
-        {userAddedNotification && (
-          <div className="flex justify-center mb-4">
-            <span className="rounded-full bg-secondary px-3 py-1 text-xs text-muted-foreground">
-              {userAddedNotification}
-            </span>
-          </div>
-        )}
+        {/* user-added notification removed (state was unused) */}
         {/* If no messages, but group has members, show nothing */}
         {messageGroups.length === 0 && conversation.is_group && conversation.participants.length > 1 ? null :
           messageGroups.length === 0 ? (
