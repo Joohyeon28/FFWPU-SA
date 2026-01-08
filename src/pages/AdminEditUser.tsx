@@ -189,8 +189,24 @@ const AdminEditUser = () => {
           queryClient.setQueryData(queryKey, updated);
         });
 
-        // Ensure other matching admin-users queries are refetched as well
+        // Also update member directory caches (queryKey starting with "members")
+        const memberQueries = queryClient.getQueriesData({ queryKey: ["members"] });
+        memberQueries.forEach(([queryKey, queryData]) => {
+          if (!Array.isArray(queryData)) return;
+          // Many member queries return an object like { members: [], total }
+          if (Array.isArray((queryData as any).members)) {
+            const cast = queryData as any;
+            const updatedMembers = cast.members.map((m: any) => (m.user_id === data.user_id ? { ...m, ...data } : m));
+            queryClient.setQueryData(queryKey, { ...cast, members: updatedMembers });
+          } else {
+            const updated = (queryData as any[]).map((u) => (u.user_id === data.user_id ? { ...u, ...data } : u));
+            queryClient.setQueryData(queryKey, updated);
+          }
+        });
+
+        // Ensure other matching admin-users and members queries are refetched as well
         queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+        queryClient.invalidateQueries({ queryKey: ["members"] });
       } catch (err) {
         // ignore cache errors — we'll still navigate and toast
         console.error("Cache update error:", err);
