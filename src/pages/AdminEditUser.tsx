@@ -174,8 +174,28 @@ const AdminEditUser = () => {
       };
       return updateUserProfile(userId, payload);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["userProfile", userId] });
+    onSuccess: (data) => {
+      // Immediately update the single user profile cache with the returned data
+      try {
+        if (userId) {
+          queryClient.setQueryData(["userProfile", userId], data);
+        }
+
+        // Update any cached admin-users lists so the list reflects changes instantly
+        const adminQueries = queryClient.getQueriesData({ queryKey: ["admin-users"] });
+        adminQueries.forEach(([queryKey, queryData]) => {
+          if (!Array.isArray(queryData)) return;
+          const updated = (queryData as any[]).map((u) => (u.user_id === data.user_id ? { ...u, ...data } : u));
+          queryClient.setQueryData(queryKey, updated);
+        });
+
+        // Ensure other matching admin-users queries are refetched as well
+        queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      } catch (err) {
+        // ignore cache errors — we'll still navigate and toast
+        console.error("Cache update error:", err);
+      }
+
       toast({
         title: "Success",
         description: "User profile updated successfully",

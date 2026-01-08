@@ -176,8 +176,25 @@ const ProfileEdit = () => {
       };
       return updateUserProfile(user.id, payload);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["userProfile", user?.id] });
+    onSuccess: (data) => {
+      try {
+        if (user) {
+          queryClient.setQueryData(["userProfile", user.id], data);
+        }
+
+        // Update any cached admin-users lists
+        const adminQueries = queryClient.getQueriesData(["admin-users"]);
+        adminQueries.forEach(([queryKey, queryData]) => {
+          if (!Array.isArray(queryData)) return;
+          const updated = (queryData as any[]).map((u) => (u.user_id === data.user_id ? { ...u, ...data } : u));
+          queryClient.setQueryData(queryKey, updated);
+        });
+
+        queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      } catch (err) {
+        console.error("Cache update error:", err);
+      }
+
       navigate("/dashboard");
     },
   });

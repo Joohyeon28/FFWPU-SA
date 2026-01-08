@@ -157,10 +157,17 @@ const MessagesInner: React.FC = () => {
 };
 
 const Messages: React.FC = () => {
+  const { user, isLoading } = useAuth();
+  const navigate = useNavigate();
+
+  if (isLoading) return (<div className="flex min-h-screen flex-col"><Header /><main className="flex-1 flex items-center justify-center"><p className="text-muted-foreground">Loading...</p></main><Footer/></div>);
+  if (!user) return (<div className="flex min-h-screen flex-col"><Header /><main className="flex-1 flex items-center justify-center"><div className="text-center"><p className="text-lg font-medium mb-4">Please log in to access messages</p><Button onClick={() => navigate('/login')}>Go to Login</Button></div></main><Footer/></div>);
+
   const jwt = (() => {
     try { const raw = window.localStorage.getItem('sb-opendizwrcmluvxabajt-auth-token'); if (!raw) return ''; const parsed = JSON.parse(raw); return parsed?.access_token || ''; }
     catch (e) { return ''; }
   })();
+
   if (!jwt) return (<div className="flex min-h-screen flex-col"><Header /><main className="flex-1 flex items-center justify-center"><p className="text-muted-foreground">Loading messages...</p></main><Footer/></div>);
   return (<SocketProvider jwt={jwt}><MessagesInner /></SocketProvider>);
 };

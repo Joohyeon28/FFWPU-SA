@@ -1,8 +1,9 @@
 import React from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import type { UserProfile } from "@/lib/profile";
+import { fetchUserProfile } from "@/lib/profile";
 
 type Props = {
   userId?: string;
@@ -16,8 +17,14 @@ const UserAvatar: React.FC<Props> = ({ userId: userIdProp, src, className, alt }
   const userId = userIdProp || user?.id;
   const queryClient = useQueryClient();
 
-  // Get profile from cache instead of fetching
-  const profile = queryClient.getQueryData<UserProfile>(["userProfile", userId]);
+  const { data: profile } = useQuery({
+    queryKey: ["userProfile", userId],
+    queryFn: () => (userId ? fetchUserProfile(userId) : null),
+    enabled: !!userId,
+    // Use cached data if available so we don't flash empty state
+    initialData: () => queryClient.getQueryData<UserProfile>(["userProfile", userId]),
+    staleTime: 1000 * 60 * 5,
+  });
 
   const avatarSrc = src ?? profile?.avatar_url ?? "";
   const name = profile?.full_name ?? profile?.name ?? user?.email ?? "?";

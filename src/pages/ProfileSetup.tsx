@@ -118,7 +118,24 @@ const ProfileSetup = () => {
         extra_fields: fields.map(f => ({ title: f.title, value: f.value }))
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (data) => {
+      try {
+        if (user) {
+          queryClient.setQueryData(["userProfile", user.id], data);
+        }
+
+        const adminQueries = queryClient.getQueriesData(["admin-users"]);
+        adminQueries.forEach(([queryKey, queryData]) => {
+          if (!Array.isArray(queryData)) return;
+          const updated = (queryData as any[]).map((u) => (u.user_id === data.user_id ? { ...u, ...data } : u));
+          queryClient.setQueryData(queryKey, updated);
+        });
+
+        queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+      } catch (err) {
+        console.error("Cache update error:", err);
+      }
+
       toast({
         title: "Profile completed!",
         description: "Welcome to your dashboard.",

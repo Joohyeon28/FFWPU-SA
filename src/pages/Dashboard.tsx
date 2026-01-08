@@ -109,8 +109,17 @@ const Dashboard = () => {
       i === editingIndex ? { ...f, title: editTitle, value: editValue } : f
     );
     try {
-      await updateUserProfile(user.id, { extra_fields: newFields });
-      await queryClient.invalidateQueries({ queryKey: ["userProfile", user.id] });
+      const updated = await updateUserProfile(user.id, { extra_fields: newFields });
+      queryClient.setQueryData(["userProfile", user.id], updated);
+
+      const adminQueries = queryClient.getQueriesData(["admin-users"]);
+      adminQueries.forEach(([queryKey, queryData]) => {
+        if (!Array.isArray(queryData)) return;
+        const updatedList = (queryData as any[]).map((u) => (u.user_id === updated.user_id ? { ...u, ...updated } : u));
+        queryClient.setQueryData(queryKey, updatedList);
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
       cancelInlineEdit();
     } catch (err) {
       console.error("Failed to save field", err);
@@ -121,8 +130,17 @@ const Dashboard = () => {
     if (deletingIndex === null || !user || !profile) return;
     const newFields = (profile.extra_fields || []).filter((_, i) => i !== deletingIndex);
     try {
-      await updateUserProfile(user.id, { extra_fields: newFields });
-      await queryClient.invalidateQueries({ queryKey: ["userProfile", user.id] });
+      const updated = await updateUserProfile(user.id, { extra_fields: newFields });
+      queryClient.setQueryData(["userProfile", user.id], updated);
+
+      const adminQueries = queryClient.getQueriesData(["admin-users"]);
+      adminQueries.forEach(([queryKey, queryData]) => {
+        if (!Array.isArray(queryData)) return;
+        const updatedList = (queryData as any[]).map((u) => (u.user_id === updated.user_id ? { ...u, ...updated } : u));
+        queryClient.setQueryData(queryKey, updatedList);
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["admin-users"] });
     } catch (err) {
       console.error("Failed to delete field", err);
     } finally {
